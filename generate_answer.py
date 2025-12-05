@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 import os, json, textwrap, re, time
 import requests
-from collections import Counter
+from collections import Counter, deque 
 
 
 INPUT_PATH = Path("cse_476_final_project_test_data.json")
@@ -91,8 +91,26 @@ def self_consistency(prompt, system, num_samples):
     count = Counter(responses)
     return count.most_common(1)[0][0] #most common response
 
-def tree_of_thought():
-    return
+def generate_thoughts(prompt, system, num_samples):
+    thoughts = []
+    for i in range(num_samples):
+        response = call_model_chat_completions(prompt, system=system, model=MODEL, temperature=0.0)
+        thoughts.append(response)
+    return thoughts
+
+def evaluate_thoughts(thoughts: List[str]) -> List[Dict]:
+    evaluated_thoughts = []
+    for thought in thoughts:
+        response = call_model_chat_completions(thought["prompt"], temperature=0.0)
+        evaluated_thoughts.append(response)
+    return evaluate_thoughts
+
+def tree_of_thought(prompt, system, num_samples):
+    thoughts = generate_thoughts(prompt, system, num_samples)
+    evaluated_thoughts = evaluate_thoughts(thoughts)
+    best_thought = evaluate_thoughts[0]["thought"]
+
+    return best_thought
 
 
 def build_answers(questions: List[Dict[str, Any]]) -> List[Dict[str, str]]:
