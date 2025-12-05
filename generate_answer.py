@@ -19,10 +19,55 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, List
+import os, json, textwrap, re, time
+import requests
 
 
 INPUT_PATH = Path("cse_476_final_project_test_data.json")
 OUTPUT_PATH = Path("cse_476_final_project_answers.json")
+
+API_KEY  = os.getenv("OPENAI_API_KEY", "cse476")
+API_BASE = os.getenv("API_BASE", "http://10.4.58.53:41701/v1")  
+MODEL    = os.getenv("MODEL_NAME", "bens_model")              
+
+def call_model_chat_completions(prompt: str,
+                                system: str = "You are a helpful assistant. Reply with only the final answer—no explanation.",
+                                model: str = MODEL,
+                                temperature: float = 0.0,
+                                timeout: int = 60) -> dict:
+    url = f"{API_BASE}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type":  "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user",   "content": prompt}
+        ],
+        "temperature": temperature,
+        "max_tokens": 128,
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        status = resp.status_code
+        hdrs   = dict(resp.headers)
+        if status == 200:
+            data = resp.json()
+            text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            return {"ok": True, "text": text, "raw": data, "status": status, "error": None, "headers": hdrs}
+        else:
+            # try best-effort to surface error text
+            err_text = None
+            try:
+                err_text = resp.json()
+            except Exception:
+                err_text = resp.text
+            return {"ok": False, "text": None, "raw": None, "status": status, "error": str(err_text), "headers": hdrs}
+    except requests.RequestException as e:
+        return {"ok": False, "text": None, "raw": None, "status": -1, "error": str(e), "headers": {}}
 
 
 def load_questions(path: Path) -> List[Dict[str, Any]]:
@@ -33,8 +78,8 @@ def load_questions(path: Path) -> List[Dict[str, Any]]:
     return data
 
 
-def chain_of_thought():
-    return
+def chain_of_thought(prompt, system): #Zero-shot-cot
+    return call_model_chat_completions(prompt, system, model=MODEL, temperature=0.0)
 
 def self_consistency():
     return
@@ -103,14 +148,11 @@ Top ranked by performance get EC.
 
 techniques and time-inference algorithms (must select 3):
 -Chain-of-Thought (CoT)
--Inference-Time scaling
--Decoding/Generation
--Diffusion Model Alignment
--Mixture of Experts (MoE)
+-Decoding/Generation?
+-Diffusion Model Alignment?
+-Mixture of Experts (MoE)?
 -RAG?
 -Self-Consistency
 -Tree-of-thought / X-of-thought
 -Analogical Reasoning
-
-
 '''
