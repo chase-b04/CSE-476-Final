@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 import os, json, textwrap, re, time
 import requests
+from collections import Counter
 
 
 INPUT_PATH = Path("cse_476_final_project_test_data.json")
@@ -81,8 +82,14 @@ def load_questions(path: Path) -> List[Dict[str, Any]]:
 def chain_of_thought(prompt, system): #Zero-shot-cot
     return call_model_chat_completions(prompt, system, model=MODEL, temperature=0.0)
 
-def self_consistency():
-    return
+def self_consistency(prompt, system, num_samples):
+    responses = []
+    for i in num_samples:
+        response = chain_of_thought(prompt, system)
+        responses.append(response)
+
+    count = Counter(responses)
+    return count.most_common(1)[0][0] #most common response
 
 def tree_of_thought():
     return
