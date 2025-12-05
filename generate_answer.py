@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+#Student: Chase Bulkin
+#ID: 1224681913
+
+#MAKE SURE TO CONNECT TO sslvpn.asu.edu/2fa ON SSL
 """
 Generate a placeholder answer file that matches the expected auto-grader format.
 
@@ -26,6 +31,16 @@ def load_questions(path: Path) -> List[Dict[str, Any]]:
     if not isinstance(data, list):
         raise ValueError("Input file must contain a list of question objects.")
     return data
+
+
+def chain_of_thought():
+    return
+
+def self_consistency():
+    return
+
+def tree_of_thought():
+    return
 
 
 def build_answers(questions: List[Dict[str, Any]]) -> List[Dict[str, str]]:
@@ -79,3 +94,23 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
+'''
+NOTES:
+Have to pick 3 different technologies with <20 system calls per question.
+You must not hardcode a full delegation to an external tool (e.g., google_search(input_problem)). 
+Coded is vscode not cursor. No GPT calls or calls of any other AI model.
+Top ranked by performance get EC.
+
+techniques and time-inference algorithms (must select 3):
+-Chain-of-Thought (CoT)
+-Inference-Time scaling
+-Decoding/Generation
+-Diffusion Model Alignment
+-Mixture of Experts (MoE)
+-RAG?
+-Self-Consistency
+-Tree-of-thought / X-of-thought
+-Analogical Reasoning
+
+
+'''
