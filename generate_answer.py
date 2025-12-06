@@ -72,7 +72,7 @@ def call_model_chat_completions(prompt: str,
 
 
 def load_questions(path: Path) -> List[Dict[str, Any]]:
-    with path.open("r") as fp:
+    with path.open("r", encoding="utf-8") as fp:
         data = json.load(fp)
     if not isinstance(data, list):
         raise ValueError("Input file must contain a list of question objects.")
@@ -80,17 +80,33 @@ def load_questions(path: Path) -> List[Dict[str, Any]]:
 
 
 def chain_of_thought(prompt) -> str: #Zero-shot-cot
-    response = call_model_chat_completions(prompt, model=MODEL, temperature=0.0)
-    if response:
-        return extract_answer(response["text"])
-    return "Error, no response pulled for chain of thought method"
+    new_prompt = f"""QUESTION: {prompt} 
+    only post the final answer and your reasoning
+    """
+    response = call_model_chat_completions(new_prompt, model=MODEL, temperature=0.0)
+    return extract_answer(response["text"])
 
 def self_consistency(prompt, num_samples):
     responses = []
+    new_prompt = f"""QUESTION: {prompt} 
+    only post the final answer and your reasoning
+    """
     for i in range(num_samples):
-        response = chain_of_thought(prompt, num_samples, temperature=0.7)
+        #response = chain_of_thought(prompt)
+        temp = 0.0 if i == 0 else 0.7
+        if i == 0:
+            temp = 0.0
+        elif i == 1:
+            temp = 0.1
+        elif i == 2:
+            temp = 0.5
+        else:
+            temp = 0.7
+        response = call_model_chat_completions(new_prompt, model=MODEL, temperature=temp)
+        #print(response["text"]) #Debug
         answer = extract_answer(response["text"])
-        responses.append(normalize_text(answer))
+        if answer:
+            responses.append(normalize_text(answer))
 
     count = Counter(responses)
     return count.most_common(1)[0][0] #most common response
@@ -99,22 +115,32 @@ def self_consistency(prompt, num_samples):
 def generate_thoughts(prompt, num_samples) -> str:
     thoughts = []
     for i in range(num_samples):
-        response = call_model_chat_completions(prompt, model=MODEL, temperature=0.7)
+        new_prompt = f"""QUESTION #{i+1}: {prompt} 
+        only post the answer and your reasoning
+        """
+        response = call_model_chat_completions(new_prompt, model=MODEL, temperature=0.7)
         thoughts.append(response["text"])
     return thoughts
 
-def evaluate_thoughts(thoughts: List[str]) -> List[Dict]:
+def evaluate_thoughts(prompt, thoughts: List[str]) -> List[Dict]:
     evaluated_thoughts_list = []
-    for thought in thoughts:
-        response = call_model_chat_completions(thought["prompt"], temperature=0.0)
+    for i in thoughts:
+        new_prompt = f"""Question: {prompt}
+    the current reasoning approach: {i}
+    rate this approach from 1-10
+    """
+        response = call_model_chat_completions(new_prompt, temperature=0.0)
         score_num = extract_number(response["text"])
-        score = max(1.0, min(10.0, float(score_num)))
-        evaluated_thoughts_list.append({"thought": thought, "score": score})
-    return evaluated_thoughts_list
+        score = 0.0
+        if score_num:
+            score = max(1.0, min(10.0, float(score_num)))
+        evaluated_thoughts_list.append({"thought": i, "score": score})
+    sorted_evaluated_thoughts_list = sorted(evaluated_thoughts_list, key=lambda item: item["score"], reverse=True)
+    return sorted_evaluated_thoughts_list
 
 def tree_of_thought(prompt, num_samples):
     thoughts = generate_thoughts(prompt, num_samples)
-    evaluated_thoughts_list = evaluate_thoughts(thoughts)
+    evaluated_thoughts_list = evaluate_thoughts(prompt, thoughts)
     best_thought = evaluated_thoughts_list[0]["thought"]
     finish_prompt = f"""Question: {prompt}
     Good reasoning approach: {best_thought}
@@ -158,6 +184,8 @@ def agent_loop(question):
     num_samples = 3
     self_con = self_consistency(prompt, num_samples)
     tot = tree_of_thought(prompt, num_samples)
+    print(f"Answers: Chain-of-Though = {cot},\nSelf-Consistency = {self_con},\nTree-of-Thought = {tot}\n")
+
     combined_answers = [normalize_text(cot), normalize_text(self_con), normalize_text(tot)]
     count = Counter(combined_answers)
     best_answer = count.most_common(1)[0][0]
@@ -176,11 +204,17 @@ def extract_number(s: str):
     return m.group(0) if m else None
 
 def extract_answer(s: str):
-    patterns = [] #Add to this later when answer is fully figured out
+    if not s:
+        return ""
+
+    patterns = [r"final answer:?\s*(.+?)(?:\n|$)",
+        r"answer:?\s*(.+?)(?:\n|$)"] #Add to this later when answer is fully figured out
     for pattern in patterns:
         m = re.search(pattern, s)
         if m:
             return m.group(1).strip()
+    lines = [l.strip() for l in s.strip().split('\n') if l.strip()]
+    return lines[-1]
 
 def build_answers(questions: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     answers = []
@@ -212,3 +246,58 @@ def validate_results(
                 f"Answer at index {idx} exceeds 5000 characters "
                 f"({len(answer['output'])} chars). Please make sure your answer does not include any intermediate results."
             )
+        
+def main() -> None:
+    questions = load_questions(INPUT_PATH)
+    answers = build_answers(questions)
+
+    with OUTPUT_PATH.open("w") as fp:
+        json.dump(answers, fp, ensure_ascii=False, indent=2)
+
+    with OUTPUT_PATH.open("r") as fp:
+        saved_answers = json.load(fp)
+    validate_results(questions, saved_answers)
+    print(
+        f"Wrote {len(answers)} answers to {OUTPUT_PATH} "
+        "and validated format successfully."
+    )
+
+
+if __name__ == "__main__":
+    main()
+
+'''
+NOTES:
+Have to pick 3 different technologies with <20 system calls per question.
+You must not hardcode a full delegation to an external tool (e.g., google_search(input_problem)). 
+Coded is vscode not cursor. No GPT calls or calls of any other AI model.
+Top ranked by performance get EC.
+
+techniques and time-inference algorithms (must select 3):
+-Chain-of-Thought (CoT)
+-Decoding/Generation?
+-Diffusion Model Alignment?
+-Mixture of Experts (MoE)?
+-RAG?
+-Self-Consistency
+-Tree-of-thought / X-of-thought
+-Analogical Reasoning
+
+
+Making good prompts:
+Follow this guide: https://www.sophiehundertmark.com/en/new-prompting-rules-for-the-use-of-reasoning-models-deep-research/
+1. Direct and simple
+this guide says to avoid chain of thought, be I actually want to use it here for my methods
+
+For extract answer with print(response) on:
+Final Answer: A. condensation**
+Answers: Chain-of-Though = The grass being wet suggests that water is present on its surface.
+**Total earnings** = $750 + $250 = **$1000**
+
+Final Answer: **$1000**
+Answers: Chain-of-Though = - Total earnings: $ 300 + 150 = 4
+
+Final Answer:** Warner Bros. Records
+
+So I need: Final Answer:, Answers:, 
+'''
