@@ -82,45 +82,87 @@ def load_questions(path: Path) -> List[Dict[str, Any]]:
 def chain_of_thought(prompt, system): #Zero-shot-cot
     return call_model_chat_completions(prompt, system, model=MODEL, temperature=0.0)
 
-def self_consistency(prompt, system, num_samples):
+def self_consistency(prompt, num_samples):
     responses = []
-    for i in num_samples:
-        response = chain_of_thought(prompt, system)
-        responses.append(response)
+    for i in range(num_samples):
+        response = chain_of_thought(prompt, num_samples)
+        responses.append(response["text"])
 
     count = Counter(responses)
     return count.most_common(1)[0][0] #most common response
 
-def generate_thoughts(prompt, system, num_samples):
+def generate_thoughts(prompt, num_samples):
     thoughts = []
     for i in range(num_samples):
-        response = call_model_chat_completions(prompt, system=system, model=MODEL, temperature=0.0)
-        thoughts.append(response)
+        response = call_model_chat_completions(prompt, model=MODEL, temperature=0.0)
+        thoughts.append(response["text"])
     return thoughts
 
 def evaluate_thoughts(thoughts: List[str]) -> List[Dict]:
-    evaluated_thoughts = []
+    evaluated_thoughts_list = []
     for thought in thoughts:
         response = call_model_chat_completions(thought["prompt"], temperature=0.0)
-        evaluated_thoughts.append(response)
-    return evaluate_thoughts
+        evaluated_thoughts_list.append(response["text"])
+    return evaluated_thoughts_list
 
-def tree_of_thought(prompt, system, num_samples):
-    thoughts = generate_thoughts(prompt, system, num_samples)
-    evaluated_thoughts = evaluate_thoughts(thoughts)
-    best_thought = evaluate_thoughts[0]["thought"]
+def tree_of_thought(prompt, num_samples):
+    thoughts = generate_thoughts(prompt, num_samples)
+    evaluated_thoughts_list = evaluate_thoughts(thoughts)
+    best_thought = evaluated_thoughts_list[0]["thought"]
 
     return best_thought
 
+
+def make_prompt(question):
+    prompt = f"""For the given question:
+
+    {question}
+
+    Solve step-by-step and show your reasoning and analysis for your answer.
+"""
+    return prompt
+
+def normalize_text(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = re.sub(r"[^\w\s\-']", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+
+    synonyms = {
+        "unchanged": "stay the same",
+        "no change": "stay the same",
+        "same": "stay the same",
+        "second place": "second",
+        "2nd": "second",
+        "first place": "first",
+        "third place": "third",
+    }
+    return synonyms.get(s, s)
+
+def agent_loop(question):
+    prompt = make_prompt(question)
+    cot = chain_of_thought(prompt)
+    num_samples = 5
+    self_con = self_consistency(prompt, num_samples)
+    tot = tree_of_thought(prompt, num_samples)
+    combined_answers = [normalize_text(cot["text"]), normalize_text(self_con["text"]), normalize_text(tot["text"])]
+    count = Counter(combined_answers)
+    best_answer = count.most_common(1)[0][0]
+
+    if best_answer == normalize_text(tot["text"]):
+        return tot
+    elif best_answer == normalize_text(self_con["text"]):
+        return self_con
+    else:
+        return cot
 
 def build_answers(questions: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     answers = []
     for idx, question in enumerate(questions, start=1):
         # Example: assume you have an agent loop that produces an answer string.
-        # real_answer = agent_loop(question["input"])
-        # answers.append({"output": real_answer})
-        placeholder_answer = f"Placeholder answer for question {idx}"
-        answers.append({"output": placeholder_answer})
+        real_answer = agent_loop(question["input"])
+        answers.append({"output": real_answer})
+        # placeholder_answer = f"Placeholder answer for question {idx}"
+        # answers.append({"output": placeholder_answer})
     return answers
 
 
@@ -180,4 +222,10 @@ techniques and time-inference algorithms (must select 3):
 -Self-Consistency
 -Tree-of-thought / X-of-thought
 -Analogical Reasoning
+
+
+Making good prompts:
+Follow this guide: https://www.sophiehundertmark.com/en/new-prompting-rules-for-the-use-of-reasoning-models-deep-research/
+1. Direct and simple
+this guide says to avoid chain of thought, be I actually want to use it here for my methods
 '''
