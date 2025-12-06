@@ -22,6 +22,8 @@ from typing import Any, Dict, List
 import os, json, textwrap, re, time
 import requests
 from collections import Counter, deque 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 
 INPUT_PATH = Path("cse_476_final_project_test_data.json")
@@ -111,46 +113,24 @@ def self_consistency(prompt, num_samples):
     count = Counter(responses)
     return count.most_common(1)[0][0] #most common response
 
+def few_shot_prompting(prompt):
+    new_prompt = f"""You will be asked a question, here some examples of how you should respond:
 
-def generate_thoughts(prompt, num_samples) -> str:
-    thoughts = []
-    for i in range(num_samples):
-        new_prompt = f"""QUESTION #{i+1}: {prompt} 
-        only post the answer and your reasoning
-        """
-        response = call_model_chat_completions(new_prompt, model=MODEL, temperature=0.7)
-        thoughts.append(response["text"])
-    return thoughts
+    Example 1: 
+    Question: A student walks to school one morning and notices the grass is wet but the streets are dry. Which of these processes most likely caused the grass to be wet? A. condensation B. erosion C. evaporation D. precipitation
+    Answer: The correct answer is A. Condensation
 
-def evaluate_thoughts(prompt, thoughts: List[str]) -> List[Dict]:
-    evaluated_thoughts_list = []
-    for i in thoughts:
-        new_prompt = f"""Question: {prompt}
-    the current reasoning approach: {i}
-    rate this approach from 1-10
+    Example 2:
+    Question: A marketing company pays its employees on a commission-based salary system. If you sell goods worth $1000, you earn a 30% commission. Sales over $1000 get you an additional 10% commission. Calculate the amount of money Antonella earned if she sold goods worth $2500.
+    Answer: First I need to calculate the comission for $1000, $1000 x 0.30 = $300. To find the money Antonelle made from $2500, I need to subtract $1000 from $2500: $2500 - $1000 = $1500. Then I need to find the remaining comission on the last $1500, at a rate that is now 10% higher: 0.30 + 0.10 = 0.40. Thus: $1500 x 0.40 = $600. So the total earnings is $300 + $600 = $900.
+   
+    Now, solve this problem!:
+    Question: {prompt}
+    Answer:
     """
-        response = call_model_chat_completions(new_prompt, temperature=0.0)
-        score_num = extract_number(response["text"])
-        score = 0.0
-        if score_num:
-            score = max(1.0, min(10.0, float(score_num)))
-        evaluated_thoughts_list.append({"thought": i, "score": score})
-    sorted_evaluated_thoughts_list = sorted(evaluated_thoughts_list, key=lambda item: item["score"], reverse=True)
-    return sorted_evaluated_thoughts_list
-
-def tree_of_thought(prompt, num_samples):
-    thoughts = generate_thoughts(prompt, num_samples)
-    evaluated_thoughts_list = evaluate_thoughts(prompt, thoughts)
-    best_thought = evaluated_thoughts_list[0]["thought"]
-    finish_prompt = f"""Question: {prompt}
-    Good reasoning approach: {best_thought}
-
-    only post the final answer and your reasoning
-    """
-    response = call_model_chat_completions(finish_prompt, model=MODEL, temperature=0.0)
-    if response["ok"]:
-        return extract_answer(response["text"])
-    return extract_answer(best_thought)
+    response = call_model_chat_completions(new_prompt, model=MODEL, temperature=0.0)
+        #print(response["text"]) #Debug
+    return extract_answer(response["text"])
 
 
 def make_prompt(question):
@@ -183,17 +163,20 @@ def agent_loop(question):
     cot = chain_of_thought(prompt)
     num_samples = 3
     self_con = self_consistency(prompt, num_samples)
-    tot = tree_of_thought(prompt, num_samples)
-    print(f"Answers: Chain-of-Though = {cot},\nSelf-Consistency = {self_con},\nTree-of-Thought = {tot}\n")
+    few = few_shot_prompting(prompt)
+    # tot = tree_of_thought(prompt, num_samples)
+    print(f"Answers:\n-Chain-of-Though =     {cot},\n-Self-Consistency =     {self_con},\n-Few-Shot-Prompting = {few}\n") #more readable for me
 
-    combined_answers = [normalize_text(cot), normalize_text(self_con), normalize_text(tot)]
+    combined_answers = [normalize_text(cot), normalize_text(self_con), normalize_text(few)]
     count = Counter(combined_answers)
     best_answer = count.most_common(1)[0][0]
 
-    if best_answer == normalize_text(tot):
-        return tot
-    elif best_answer == normalize_text(self_con):
+    # if best_answer == normalize_text(tot):
+    #     return tot
+    if best_answer == normalize_text(self_con):
         return self_con
+    elif best_answer == normalize_text(few):
+        return few
     else:
         return cot
 
@@ -300,4 +283,49 @@ Answers: Chain-of-Though = - Total earnings: $ 300 + 150 = 4
 Final Answer:** Warner Bros. Records
 
 So I need: Final Answer:, Answers:, 
+
+
+"A marketing company pays its employees on a commission-based salary system. If you sell goods worth $1000, you earn a 30% commission. Sales over $1000 get you an additional 10% commission. Calculate the amount of money Antonella earned if she sold goods worth $2500."
+"input": "A student walks to school one morning and notices the grass is wet but the streets are dry. Which of these processes most likely caused the grass to be wet? A. condensation B. erosion C. evaporation D. precipitation"
 '''
+
+
+# def generate_thoughts(prompt, num_samples) -> str:
+#     thoughts = []
+#     for i in range(num_samples):
+#         new_prompt = f"""QUESTION #{i+1}: {prompt} 
+#         only post the answer and your reasoning
+#         """
+#         response = call_model_chat_completions(new_prompt, model=MODEL, temperature=0.7)
+#         thoughts.append(response["text"])
+#     return thoughts
+
+# def evaluate_thoughts(prompt, thoughts: List[str]) -> List[Dict]:
+#     evaluated_thoughts_list = []
+#     for i in thoughts:
+#         new_prompt = f"""Question: {prompt}
+#     the current reasoning approach: {i}
+#     rate this approach from 1-10
+#     """
+#         response = call_model_chat_completions(new_prompt, temperature=0.0)
+#         score_num = extract_number(response["text"])
+#         score = 0.0
+#         if score_num:
+#             score = max(1.0, min(10.0, float(score_num)))
+#         evaluated_thoughts_list.append({"thought": i, "score": score})
+#     sorted_evaluated_thoughts_list = sorted(evaluated_thoughts_list, key=lambda item: item["score"], reverse=True)
+#     return sorted_evaluated_thoughts_list
+
+# def tree_of_thought(prompt, num_samples):
+#     thoughts = generate_thoughts(prompt, num_samples)
+#     evaluated_thoughts_list = evaluate_thoughts(prompt, thoughts)
+#     best_thought = evaluated_thoughts_list[0]["thought"]
+#     finish_prompt = f"""Question: {prompt}
+#     Good reasoning approach: {best_thought}
+
+#     only post the final answer and your reasoning
+#     """
+#     response = call_model_chat_completions(finish_prompt, model=MODEL, temperature=0.0)
+#     if response["ok"]:
+#         return extract_answer(response["text"])
+#     return extract_answer(best_thought)
