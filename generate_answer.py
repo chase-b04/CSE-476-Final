@@ -92,7 +92,8 @@ def load_questions(path: Path) -> List[Dict[str, Any]]:
 
 def chain_of_thought(prompt) -> str: #Zero-shot-cot
     new_prompt = f"""QUESTION: {prompt} 
-    only post the final answer and your reasoning
+
+    Let's think step-by-step. At the end, state your final answer.
     """
     response = call_model_chat_completions(new_prompt, model=MODEL, temperature=0.0)
     return extract_answer(response["text"])
@@ -105,7 +106,8 @@ def self_consistency(prompt, num_samples):
         temps = [0.0, 0.1, 0.5, 0.7]
         temp = temps[i] if i < len(temps) else 0.7
         new_prompt = f"""QUESTION: {prompt} 
-        only post the final answer and your reasoning
+
+        Let's think step-by-step. At the end, state your final answer.
         """
         response = call_model_chat_completions(new_prompt, model=MODEL, temperature=temp)
         answer = extract_answer(response["text"])
@@ -129,22 +131,21 @@ def few_shot_prompting(prompt):
     new_prompt = f"""You will be asked a question, here some examples of how you should respond:
 
     Example 1: 
-    Question: A student walks to school one morning and notices the grass is wet but the streets are dry. Which of these processes most likely caused the grass to be wet? A. condensation B. erosion C. evaporation D. precipitation
-    Answer: The correct answer is A. Condensation
+    Question: Which of these processes could cause grass to be wet? A. condensation B. evaporation
+    Final Answer: A. condensation
 
     Example 2:
-    Question: A marketing company pays its employees on a commission-based salary system. If you sell goods worth $1000, you earn a 30% commission. Sales over $1000 get you an additional 10% commission. Calculate the amount of money Antonella earned if she sold goods worth $2500.
-    Answer: First I need to calculate the comission for $1000, $1000 x 0.30 = $300. To find the money Antonelle made from $2500, I need to subtract $1000 from $2500: $2500 - $1000 = $1500. Then I need to find the remaining comission on the last $1500, at a rate that is now 10% higher: 0.30 + 0.10 = 0.40. Thus: $1500 x 0.40 = $600. So the total earnings is $300 + $600 = $900.
-   
-    Now, solve this problem!:
+    Question: What is (0.30 + 0.10) * 1500?
+    Final Answer: 600
+
+    Now, solve this problem:
+
     Question: {prompt}
-    Answer:
+    Final Answer:
     """
     response = call_model_chat_completions(new_prompt, model=MODEL, temperature=0.0)
         #print(response["text"]) #Debug
-    if response:
-        return extract_answer(response["text"])
-    return "Error: LLM could not produce an answer."
+    return extract_answer(response["text"])
 
 
 def make_prompt(question):
@@ -177,7 +178,7 @@ def agent_loop(question):
     prompt = make_prompt(question)
     results = {}
     lock = threading.Lock()
-    def run_cot():
+    def run_cot(): #I made three different functions inside the agent loop function for parallelism, 3x faster :3
         cot = chain_of_thought(prompt)
         with lock:
             results['cot'] = cot
@@ -192,7 +193,7 @@ def agent_loop(question):
             results['few'] = few
     #print(f"Answers:\n-Chain-of-Though =     {cot},\n-Self-Consistency =     {self_con},\n-Few-Shot-Prompting = {few}\n") #more readable for me
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor: #Use parallel threads run all three programs at the same time 
         futures = [
             executor.submit(run_cot),
             executor.submit(run_self_con),
@@ -201,12 +202,12 @@ def agent_loop(question):
         for future in as_completed(futures):
             future.result()
 
-    cot = results.get('cot', '')
+    cot = results.get('cot', '') #convert the results of each program to text to normalize
     self_con = results.get('self_con', '')
     few = results.get('few', '')
     combined_answers = [normalize_text(cot), normalize_text(self_con), normalize_text(few)]
     count = Counter(combined_answers)
-    best_answer = count.most_common(1)[0][0]
+    best_answer = count.most_common(1)[0][0] #return the best/most common answer of the three
     if not best_answer:
         print(f"Question Number {question_number}\nBest Answer: {cot}\nBest method was: Chain-of-Thought\n")
         question_number += 1
@@ -237,19 +238,28 @@ def extract_number(s: str):
 def extract_answer(s: str):
     if not s:
         return "There is no answer found"
-
-    patterns = [r"final answer:?\s*(.+?)(?:\n|$)",
-        r"answer:?\s*(.+?)(?:\n|$)",
-        r"the answer is?\s*(.+?)(?:\n|$)"]
+    
+    patterns = [r"[Ff]inal\s+[Aa]nswer\s*:?\s*(.+)",
+        r"[Ff]inal\s+[Aa]nswer:?\s*(.+?)(?:\n|$)",
+        r"[Ff]inal\s+[Aa]nswer\s*:?\s*\n(.+)",
+        r"[Aa]nswer:?\s*(.+?)(?:\n|$)",
+        r"[Aa]nswer\s*:?\s*\n(.+)",
+        r"FINAL ANSWER:?\s*(.+?)(?:\n|$)",
+        r"ANSWER:?\s*(.+?)(?:\n|$)",
+        r"[Tt]he\s+[Ff]inal\s+[Aa]nswer\s+[Ii]s?\s*(.+?)(?:\n|$)",
+        r"[Tt]he\s+[Aa]nswer\s+[Ii]s?\s*(.+?)(?:\n|$)"] #Catch any possible answers since it mocks my messy writing.
+    #Have versions for same line and new line.
     for pattern in patterns:
         m = re.search(pattern, s)
         if m:
             return m.group(1).strip()
     lines = [l.strip() for l in s.strip().split('\n') if l.strip()]
-    return lines[-1]
+    if lines:
+        return lines[-1]
+    return "There is no answer found"
 
 def build_answers(questions: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-    answers =  [None] * len(questions)
+    answers = [None] * len(questions)
     def process_question(idx, question):
         answer = agent_loop(question["input"])
         return idx, {"output": answer}
@@ -324,7 +334,7 @@ techniques and time-inference algorithms (must select 3):
 
 
 Making good prompts:
-Follow this guide: https://www.sophiehundertmark.com/en/new-prompting-rules-for-the-use-of-reasoning-models-deep-research/
+Follow this guide for CHAIN OF THOUGHT prompts: https://www.promptingguide.ai/techniques/cot
 1. Direct and simple
 this guide says to avoid chain of thought, be I actually want to use it here for my methods
 
