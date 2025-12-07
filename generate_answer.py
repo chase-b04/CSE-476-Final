@@ -106,6 +106,8 @@ def self_consistency(prompt, num_samples):
         """
         response = call_model_chat_completions(new_prompt, model=MODEL, temperature=temp)
         answer = extract_answer(response["text"])
+        if not response["ok"] or not response["text"]:
+            return
         if answer:
             with lock:
                 responses.append(normalize_text(answer))
@@ -115,8 +117,10 @@ def self_consistency(prompt, num_samples):
         for future in as_completed(futures):
             future.result()
 
-    count = Counter(responses)
-    return count.most_common(1)[0][0] #most common response
+    if responses:
+        count = Counter(responses)
+        return count.most_common(1)[0][0] #most common response
+    return "Error: LLM could not produce an answer."
 
 def few_shot_prompting(prompt):
     new_prompt = f"""You will be asked a question, here some examples of how you should respond:
@@ -135,7 +139,9 @@ def few_shot_prompting(prompt):
     """
     response = call_model_chat_completions(new_prompt, model=MODEL, temperature=0.0)
         #print(response["text"]) #Debug
-    return extract_answer(response["text"])
+    if response:
+        return extract_answer(response["text"])
+    return "Error: LLM could not produce an answer."
 
 
 def make_prompt(question):
@@ -173,7 +179,7 @@ def agent_loop(question):
         with lock:
             results['cot'] = cot
     def run_self_con():
-        num_samples = 3
+        num_samples = 2
         self_con = self_consistency(prompt, num_samples)
         with lock:
             results['self_con'] = self_con
@@ -198,6 +204,10 @@ def agent_loop(question):
     combined_answers = [normalize_text(cot), normalize_text(self_con), normalize_text(few)]
     count = Counter(combined_answers)
     best_answer = count.most_common(1)[0][0]
+    if not best_answer:
+        print(f"Question Number {question_number}\nBest Answer: {cot}\nBest method was: Chain-of-Thought\n")
+        question_number += 1
+        return cot
 
     best_return = None
     best_method = ""
@@ -223,10 +233,11 @@ def extract_number(s: str):
 
 def extract_answer(s: str):
     if not s:
-        return ""
+        return "There is no answer found"
 
     patterns = [r"final answer:?\s*(.+?)(?:\n|$)",
-        r"answer:?\s*(.+?)(?:\n|$)"] #Add to this later when answer is fully figured out
+        r"answer:?\s*(.+?)(?:\n|$)",
+        r"the answer is?\s*(.+?)(?:\n|$)"]
     for pattern in patterns:
         m = re.search(pattern, s)
         if m:
@@ -235,7 +246,7 @@ def extract_answer(s: str):
     return lines[-1]
 
 def build_answers(questions: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-    answers = []
+    answers =  [None] * len(questions)
     def process_question(idx, question):
         answer = agent_loop(question["input"])
         return idx, {"output": answer}
