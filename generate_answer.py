@@ -31,7 +31,10 @@ OUTPUT_PATH = Path("cse_476_final_project_answers.json")
 
 API_KEY  = os.getenv("OPENAI_API_KEY", "cse476")
 API_BASE = os.getenv("API_BASE", "http://10.4.58.53:41701/v1")  
-MODEL    = os.getenv("MODEL_NAME", "bens_model")              
+MODEL    = os.getenv("MODEL_NAME", "bens_model")        
+
+# api_calls = 0
+question_number = 1
 
 def call_model_chat_completions(prompt: str,
                                 system: str = "You are a helpful assistant. Reply with only the final answer—no explanation.",
@@ -39,6 +42,9 @@ def call_model_chat_completions(prompt: str,
                                 temperature: float = 0.0,
                                 timeout: int = 60) -> dict:
     url = f"{API_BASE}/chat/completions"
+    # global api_calls
+    # api_calls += 1
+    # print(api_calls)
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type":  "application/json",
@@ -159,26 +165,56 @@ def normalize_text(s: str) -> str:
     return synonyms.get(s, s)
 
 def agent_loop(question):
+    global question_number
     prompt = make_prompt(question)
-    cot = chain_of_thought(prompt)
-    num_samples = 3
-    self_con = self_consistency(prompt, num_samples)
-    few = few_shot_prompting(prompt)
-    # tot = tree_of_thought(prompt, num_samples)
-    print(f"Answers:\n-Chain-of-Though =     {cot},\n-Self-Consistency =     {self_con},\n-Few-Shot-Prompting = {few}\n") #more readable for me
+    results = {}
+    lock = threading.Lock()
+    def run_cot():
+        cot = chain_of_thought(prompt)
+        with lock:
+            results['cot'] = cot
+    def run_self_con():
+        num_samples = 3
+        self_con = self_consistency(prompt, num_samples)
+        with lock:
+            results['self_con'] = self_con
+    def run_few():
+        few = few_shot_prompting(prompt)
+        with lock:
+            results['few'] = few
+    #print(f"Answers:\n-Chain-of-Though =     {cot},\n-Self-Consistency =     {self_con},\n-Few-Shot-Prompting = {few}\n") #more readable for me
 
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [
+            executor.submit(run_cot),
+            executor.submit(run_self_con),
+            executor.submit(run_few)
+        ]
+        for future in as_completed(futures):
+            future.result()
+
+    cot = results.get('cot', '')
+    self_con = results.get('self_con', '')
+    few = results.get('few', '')
     combined_answers = [normalize_text(cot), normalize_text(self_con), normalize_text(few)]
     count = Counter(combined_answers)
     best_answer = count.most_common(1)[0][0]
 
-    # if best_answer == normalize_text(tot):
-    #     return tot
+    best_return = None
+    best_method = ""
     if best_answer == normalize_text(self_con):
-        return self_con
+        best_return = self_con
+        best_method = "Self-Consistency"
     elif best_answer == normalize_text(few):
-        return few
+        best_return = few
+        best_method = "Few-Shot Prompting"
     else:
-        return cot
+        best_return = cot
+        best_method = "Chain-of-Thought"
+    print(f"Question Number {question_number}\nBest Answer: {best_return}\nBest method was: {best_method}\n")
+    question_number += 1
+    return best_return
+    
 
 def extract_number(s: str):
     if not s:
