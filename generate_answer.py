@@ -287,10 +287,10 @@ def main() -> None:
     questions = load_questions(INPUT_PATH)
     answers = build_answers(questions)
 
-    with OUTPUT_PATH.open("w") as fp:
+    with OUTPUT_PATH.open("w", encoding="utf-8") as fp:
         json.dump(answers, fp, ensure_ascii=False, indent=2)
 
-    with OUTPUT_PATH.open("r") as fp:
+    with OUTPUT_PATH.open("r", encoding="utf-8") as fp:
         saved_answers = json.load(fp)
     validate_results(questions, saved_answers)
     print(
