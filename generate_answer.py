@@ -335,6 +335,7 @@ techniques and time-inference algorithms (must select 3):
 
 Making good prompts:
 Follow this guide for CHAIN OF THOUGHT prompts: https://www.promptingguide.ai/techniques/cot
+Follow this guide for FEW-SHOT-PROMPTING prompts: https://www.promptingguide.ai/techniques/fewshot  
 1. Direct and simple
 this guide says to avoid chain of thought, be I actually want to use it here for my methods
 
