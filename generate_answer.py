@@ -41,7 +41,7 @@ def call_model_chat_completions(prompt: str,
                                 model: str = MODEL,
                                 temperature: float = 0.0,
                                 timeout: int = 60) -> dict:
-    url = f"{API_BASE}/chat/completions"
+    url = f"{API_BASE}/chat/completions" #COULD REMOVE TIMEOUTS IF DESPERATE, BUT IT MIGHT MAKE THINGS MESSY
     # global api_calls
     # api_calls += 1
     # print(api_calls)
@@ -57,7 +57,7 @@ def call_model_chat_completions(prompt: str,
         ],
         "temperature": temperature,
         "max_tokens": 128,
-    }
+    } #SHRINK MAX TOKENS FROM 128 TO 64 IF NEEDED. IT WILL RUIN ACCURACY BUT MAKE CODE FASTER.
 
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
@@ -96,25 +96,24 @@ def chain_of_thought(prompt) -> str: #Zero-shot-cot
 
 def self_consistency(prompt, num_samples):
     responses = []
-    new_prompt = f"""QUESTION: {prompt} 
-    only post the final answer and your reasoning
-    """
-    for i in range(num_samples):
-        #response = chain_of_thought(prompt)
-        temp = 0.0 if i == 0 else 0.7
-        if i == 0:
-            temp = 0.0
-        elif i == 1:
-            temp = 0.1
-        elif i == 2:
-            temp = 0.5
-        else:
-            temp = 0.7
+    lock = threading.Lock()
+
+    def get_sample(i):
+        temps = [0.0, 0.1, 0.5, 0.7]
+        temp = temps[i] if i < len(temps) else 0.7
+        new_prompt = f"""QUESTION: {prompt} 
+        only post the final answer and your reasoning
+        """
         response = call_model_chat_completions(new_prompt, model=MODEL, temperature=temp)
-        #print(response["text"]) #Debug
         answer = extract_answer(response["text"])
         if answer:
-            responses.append(normalize_text(answer))
+            with lock:
+                responses.append(normalize_text(answer))
+
+    with ThreadPoolExecutor(max_workers=num_samples) as executor:
+        futures = [executor.submit(get_sample, i) for i in range(num_samples)]
+        for future in as_completed(futures):
+            future.result()
 
     count = Counter(responses)
     return count.most_common(1)[0][0] #most common response
@@ -237,12 +236,19 @@ def extract_answer(s: str):
 
 def build_answers(questions: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     answers = []
-    for idx, question in enumerate(questions, start=1):
-        # Example: assume you have an agent loop that produces an answer string.
-        real_answer = agent_loop(question["input"])
-        answers.append({"output": real_answer})
-        # placeholder_answer = f"Placeholder answer for question {idx}"
-        # answers.append({"output": placeholder_answer})
+    def process_question(idx, question):
+        answer = agent_loop(question["input"])
+        return idx, {"output": answer}
+    
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [
+            executor.submit(process_question, idx, q) 
+            for idx, q in enumerate(questions)
+        ]
+        
+        for future in as_completed(futures):
+            idx, answer = future.result()
+            answers[idx] = answer
     return answers
 
 
@@ -324,44 +330,3 @@ So I need: Final Answer:, Answers:,
 "A marketing company pays its employees on a commission-based salary system. If you sell goods worth $1000, you earn a 30% commission. Sales over $1000 get you an additional 10% commission. Calculate the amount of money Antonella earned if she sold goods worth $2500."
 "input": "A student walks to school one morning and notices the grass is wet but the streets are dry. Which of these processes most likely caused the grass to be wet? A. condensation B. erosion C. evaporation D. precipitation"
 '''
-
-
-# def generate_thoughts(prompt, num_samples) -> str:
-#     thoughts = []
-#     for i in range(num_samples):
-#         new_prompt = f"""QUESTION #{i+1}: {prompt} 
-#         only post the answer and your reasoning
-#         """
-#         response = call_model_chat_completions(new_prompt, model=MODEL, temperature=0.7)
-#         thoughts.append(response["text"])
-#     return thoughts
-
-# def evaluate_thoughts(prompt, thoughts: List[str]) -> List[Dict]:
-#     evaluated_thoughts_list = []
-#     for i in thoughts:
-#         new_prompt = f"""Question: {prompt}
-#     the current reasoning approach: {i}
-#     rate this approach from 1-10
-#     """
-#         response = call_model_chat_completions(new_prompt, temperature=0.0)
-#         score_num = extract_number(response["text"])
-#         score = 0.0
-#         if score_num:
-#             score = max(1.0, min(10.0, float(score_num)))
-#         evaluated_thoughts_list.append({"thought": i, "score": score})
-#     sorted_evaluated_thoughts_list = sorted(evaluated_thoughts_list, key=lambda item: item["score"], reverse=True)
-#     return sorted_evaluated_thoughts_list
-
-# def tree_of_thought(prompt, num_samples):
-#     thoughts = generate_thoughts(prompt, num_samples)
-#     evaluated_thoughts_list = evaluate_thoughts(prompt, thoughts)
-#     best_thought = evaluated_thoughts_list[0]["thought"]
-#     finish_prompt = f"""Question: {prompt}
-#     Good reasoning approach: {best_thought}
-
-#     only post the final answer and your reasoning
-#     """
-#     response = call_model_chat_completions(finish_prompt, model=MODEL, temperature=0.0)
-#     if response["ok"]:
-#         return extract_answer(response["text"])
-#     return extract_answer(best_thought)
